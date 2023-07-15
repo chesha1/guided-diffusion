@@ -154,6 +154,10 @@ class MixedPrecisionTrainer:
         fp16_scale_growth=1e-3,
         initial_lg_loss_scale=INITIAL_LOG_LOSS_SCALE,
     ):
+        # model是需要训练的模型
+        # use_fp16指定是否使用半精度浮点数计算，默认为False
+        # fp16_scale_growth指定每次迭代时的损失缩放因子增长率，默认为1e - 3
+        # initial_lg_loss_scale指定初始的损失缩放因子的对数值，默认为一个预定义的常量
         self.model = model
         self.use_fp16 = use_fp16
         self.fp16_scale_growth = fp16_scale_growth
@@ -171,9 +175,12 @@ class MixedPrecisionTrainer:
             self.model.convert_to_fp16()
 
     def zero_grad(self):
+        # 将模型参数的梯度置零
         zero_grad(self.model_params)
 
     def backward(self, loss: th.Tensor):
+        # 执行反向传播计算梯度
+        # 如果使用半精度浮点数计算，则在计算之前将损失乘以损失缩放因子
         if self.use_fp16:
             loss_scale = 2 ** self.lg_loss_scale
             (loss * loss_scale).backward()
@@ -181,12 +188,18 @@ class MixedPrecisionTrainer:
             loss.backward()
 
     def optimize(self, opt: th.optim.Optimizer):
+        # 执行优化步骤
+        # 如果使用半精度浮点数计算，调用_optimize_fp16方法进行优化
+        # 否则调用_optimize_normal方法进行优化
         if self.use_fp16:
             return self._optimize_fp16(opt)
         else:
             return self._optimize_normal(opt)
 
     def _optimize_fp16(self, opt: th.optim.Optimizer):
+        # 执行使用半精度浮点数计算的优化步骤
+        # 具体步骤包括将梯度映射到主参数，计算梯度和参数的范数，根据范数进行梯度缩放，执行优化步骤
+        # 将主参数映射回模型参数，并更新损失缩放因子
         logger.logkv_mean("lg_loss_scale", self.lg_loss_scale)
         model_grads_to_master_grads(self.param_groups_and_shapes, self.master_params)
         grad_norm, param_norm = self._compute_norms(grad_scale=2 ** self.lg_loss_scale)
@@ -208,6 +221,8 @@ class MixedPrecisionTrainer:
         return True
 
     def _optimize_normal(self, opt: th.optim.Optimizer):
+        # 执行正常精度计算的优化步骤
+        # 即直接执行优化步骤，不进行梯度缩放
         grad_norm, param_norm = self._compute_norms()
         logger.logkv_mean("grad_norm", grad_norm)
         logger.logkv_mean("param_norm", param_norm)
@@ -215,6 +230,7 @@ class MixedPrecisionTrainer:
         return True
 
     def _compute_norms(self, grad_scale=1.0):
+        # 计算梯度和参数的范数
         grad_norm = 0.0
         param_norm = 0.0
         for p in self.master_params:
@@ -225,11 +241,13 @@ class MixedPrecisionTrainer:
         return np.sqrt(grad_norm) / grad_scale, np.sqrt(param_norm)
 
     def master_params_to_state_dict(self, master_params):
+        # 将主参数转换为状态字典
         return master_params_to_state_dict(
             self.model, self.param_groups_and_shapes, master_params, self.use_fp16
         )
 
     def state_dict_to_master_params(self, state_dict):
+        # 将状态字典转换为主参数
         return state_dict_to_master_params(self.model, state_dict, self.use_fp16)
 
 

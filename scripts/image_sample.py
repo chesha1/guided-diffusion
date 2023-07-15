@@ -43,11 +43,6 @@ def main():
     all_labels = []
 
     # 在生成足够数量的样本之前，循环执行以下步骤：
-
-
-
-
-
     while len(all_images) * args.batch_size < args.num_samples:
         model_kwargs = {}
 

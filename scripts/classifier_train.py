@@ -36,11 +36,16 @@ def main():
         **args_to_dict(args, classifier_and_diffusion_defaults().keys())
     )
     model.to(dist_util.dev())
+
+    # 如果args.noised为True，代码将根据指定的调度采样器名称创建一个调度采样器对象
+    # 并将其赋值给变量schedule_sampler
     if args.noised:
         schedule_sampler = create_named_schedule_sampler(
             args.schedule_sampler, diffusion
         )
 
+    # 如果存在指定的检查点文件（args.resume_checkpoint）
+    # 则将恢复训练步骤数（resume_step）从文件名中解析出来，并加载该检查点文件中的模型参数到当前模型中
     resume_step = 0
     if args.resume_checkpoint:
         resume_step = parse_resume_step_from_filename(args.resume_checkpoint)
@@ -102,23 +107,38 @@ def main():
     logger.log("training classifier model...")
 
     def forward_backward_log(data_loader, prefix="train"):
+        # 在训练过程中执行前向传播、反向传播和日志记录
+
+        # 从数据加载器（data_loader）中获取一个批次的数据和额外的信息。
+        # 从额外的信息中获取标签，并将其移动到适当的设备上（dist_util.dev()）。
+        # 将批次数据移动到适当的设备上（dist_util.dev()）
         batch, extra = next(data_loader)
         labels = extra["y"].to(dist_util.dev())
 
         batch = batch.to(dist_util.dev())
+
         # Noisy images
+        # 如果命令行参数args.noised为True，则执行以下操作：
         if args.noised:
+            # 调用schedule_sampler.sample方法
+            # 传入批次数据的数量（batch.shape[0]）和设备（dist_util.dev()）作为参数
+            # 该方法会生成一组时间步骤（t）和噪声标记（noise），用于后续的噪声采样过程
             t, _ = schedule_sampler.sample(batch.shape[0], dist_util.dev())
+            # 将批次数据（batch）和生成的时间步骤（t）传递给扩散模型（diffusion）的q_sample方法，生成噪声图像
             batch = diffusion.q_sample(batch, t)
         else:
+            # 将t初始化为全零的张量
             t = th.zeros(batch.shape[0], dtype=th.long, device=dist_util.dev())
 
+        # 使用split_microbatches函数将批次数据、标签和t划分为子批次，以便适应微批次（microbatch）的训练
         for i, (sub_batch, sub_labels, sub_t) in enumerate(
             split_microbatches(args.microbatch, batch, labels, t)
         ):
+            # 使用模型对子批次数据进行前向传播，得到预测结果（logits）
             logits = model(sub_batch, timesteps=sub_t)
             loss = F.cross_entropy(logits, sub_labels, reduction="none")
 
+            # 创建一个字典（losses），存储损失和准确率等信息
             losses = {}
             losses[f"{prefix}_loss"] = loss.detach()
             losses[f"{prefix}_acc@1"] = compute_top_k(
@@ -127,24 +147,41 @@ def main():
             losses[f"{prefix}_acc@5"] = compute_top_k(
                 logits, sub_labels, k=5, reduction="none"
             )
+
+            # 调用log_loss_dict函数，记录损失字典中的信息到日志中
             log_loss_dict(diffusion, sub_t, losses)
             del losses
             loss = loss.mean()
+
+            # 如果损失需要梯度计算，则执行以下操作
             if loss.requires_grad:
+                # 如果是子批次的第一个子批次，则调用mp_trainer.zero_grad()
+                # 方法将模型参数的梯度置零
                 if i == 0:
                     mp_trainer.zero_grad()
+                # 执行反向传播，计算梯度
                 mp_trainer.backward(loss * len(sub_batch) / len(batch))
 
+    # 使用range函数迭代args.iterations - resume_step次
+    # 其中args.iterations是总的训练迭代次数，resume_step是之前恢复的训练步骤数
     for step in range(args.iterations - resume_step):
         logger.logkv("step", step + resume_step)
         logger.logkv(
             "samples",
             (step + resume_step + 1) * args.batch_size * dist.get_world_size(),
         )
+
+        # 如果命令行参数args.anneal_lr为True，调用set_annealed_lr函数来动态调整学习率
         if args.anneal_lr:
             set_annealed_lr(opt, args.lr, (step + resume_step) / args.iterations)
+
+        # 调用forward_backward_log函数执行前向传播、反向传播和日志记录操作，对训练数据进行训练
         forward_backward_log(data)
+        # 调用mp_trainer.optimize方法执行优化步骤，更新模型的参数
         mp_trainer.optimize(opt)
+
+        # 如果验证数据集（val_data）不为None
+        # 并且当前步骤（step）符合评估间隔（args.eval_interval）的要求，则进行验证
         if val_data is not None and not step % args.eval_interval:
             with th.no_grad():
                 with model.no_sync():

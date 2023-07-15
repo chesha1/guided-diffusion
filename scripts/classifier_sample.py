@@ -42,6 +42,8 @@ def main():
     model.eval()
 
     logger.log("loading classifier...")
+
+    # 使用args_to_dict函数将命令行参数转换为字典形式，然后传递给create_classifier函数来创建噪声图像分类器
     classifier = create_classifier(**args_to_dict(args, classifier_defaults().keys()))
     classifier.load_state_dict(
         dist_util.load_state_dict(args.classifier_path, map_location="cpu")
@@ -52,15 +54,27 @@ def main():
     classifier.eval()
 
     def cond_fn(x, t, y=None):
+        # 在采样过程中应用噪声图像分类器的条件约束
+
+        # 确保参数y不为None，即采样过程中的目标类别标签
         assert y is not None
+
         with th.enable_grad():
+            # 将输入张量x进行detach()操作，生成一个新的张量x_in
+            # 并将其设置为需要梯度计算（requires_grad_(True)）
             x_in = x.detach().requires_grad_(True)
+            # 将x_in作为输入，通过分类器模型classifier进行前向传播得到预测的logits
             logits = classifier(x_in, t)
+            # 对logits应用对数Softmax函数，得到对数概率值
             log_probs = F.log_softmax(logits, dim=-1)
+            # 计算选取概率值的和，并对其进行反向传播，计算梯度，返回调整后的梯度张量
             selected = log_probs[range(len(logits)), y.view(-1)]
             return th.autograd.grad(selected.sum(), x_in)[0] * args.classifier_scale
 
     def model_fn(x, t, y=None):
+        # 定义了一个模型函数 model_fn，该函数接收输入张量 x、时间步骤 t 和目标类别标签 y，
+        # 利用模型 model 生成图像样本
+        # 它根据参数 args.class_cond 决定是否将目标类别标签作为输入传递给模型
         assert y is not None
         return model(x, t, y if args.class_cond else None)
 
@@ -69,9 +83,11 @@ def main():
     all_labels = []
     while len(all_images) * args.batch_size < args.num_samples:
         model_kwargs = {}
+        # 使用 th.randint 生成随机的目标类别标签 classes，值的范围为 [0, NUM_CLASSES)，并将其移动到适当的设备上
         classes = th.randint(
             low=0, high=NUM_CLASSES, size=(args.batch_size,), device=dist_util.dev()
         )
+        # 将目标类别标签 classes 添加到 model_kwargs 字典中，使用键名 "y"
         model_kwargs["y"] = classes
         sample_fn = (
             diffusion.p_sample_loop if not args.use_ddim else diffusion.ddim_sample_loop
@@ -96,6 +112,7 @@ def main():
         all_labels.extend([labels.cpu().numpy() for labels in gathered_labels])
         logger.log(f"created {len(all_images) * args.batch_size} samples")
 
+    # 将采样得到的图像样本和标签保存到文件，并标记采样过程的完成
     arr = np.concatenate(all_images, axis=0)
     arr = arr[: args.num_samples]
     label_arr = np.concatenate(all_labels, axis=0)
