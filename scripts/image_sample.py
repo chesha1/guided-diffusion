@@ -1,6 +1,7 @@
 """
 Generate a large batch of image samples from a model and save them as a large
 numpy array. This can be used to produce samples for FID evaluation.
+improved-diffusion 中本文件和 guided-diffusion 中本文件一样
 """
 
 import argparse

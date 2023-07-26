@@ -1,5 +1,6 @@
 """
 Train a super-resolution model.
+improved-diffusion 中本文件和 guided-diffusion 中本文件一样
 """
 
 import argparse

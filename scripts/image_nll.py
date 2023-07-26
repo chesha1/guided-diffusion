@@ -1,6 +1,7 @@
 """
 Approximate the bits/dimension for an image model.
 这段代码用于对图像模型进行比特/维度的近似评估
+improved-diffusion 中本文件和 guided-diffusion 中本文件一样
 """
 
 import argparse

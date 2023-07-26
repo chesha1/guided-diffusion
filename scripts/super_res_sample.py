@@ -1,6 +1,7 @@
 """
 Generate a large batch of samples from a super resolution model, given a batch
 of samples from a regular model from image_sample.py.
+improved-diffusion 中本文件和 guided-diffusion 中本文件一样
 """
 
 import argparse
